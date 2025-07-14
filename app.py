@@ -29,7 +29,7 @@ def load_model():
         return tf.keras.models.load_model('gesture_model_augmented.h5')
     except:
         # Mock model for demo
-        st.warning("Model file not found. Using mock predictions for demo.")
+        st.info("Model file not found. Using landmark-based recognition (recommended).")
         return None
 
 model = load_model()
@@ -257,7 +257,7 @@ if frame is not None:
     
     # Show hand detection status
     if hand_landmarks is not None:
-        st.success("✅ Hand detected - Ready to capture gesture!")
+        st.success("✅ Hand detected - Ready to capture gesture! (Using landmark-based recognition)")
     else:
         st.warning("⚠️ No hand detected - Please show your hand to the camera")
 else:
@@ -265,23 +265,24 @@ else:
 
 # Always show capture controls - moved outside the frame check
 st.markdown("### 🎯 Gesture Capture Controls")
-col1, col2, col3 = st.columns([2, 1, 1])
+col1, col2 = st.columns([3, 1])
 with col1:
     capture_button = st.button("🎯 Capture Gesture", type="primary", use_container_width=True)
 with col2:
-    use_landmarks = st.checkbox("Use Landmarks", value=True)
-with col3:
-    debug_mode = st.checkbox("Debug")
+    debug_mode = st.checkbox("Debug", help="Show detailed gesture detection information")
+
+# Always show that we're using landmarks
+st.info("🔍 Using landmark-based gesture recognition (recommended)")
 
 # Handle capture button click
 if capture_button:
     if frame is None:
         st.error("❌ No webcam feed available. Please ensure camera is working and try again.")
         st.session_state['status_message'] = '❌ No webcam feed - check camera permissions'
-    elif hand_landmarks is not None and use_landmarks:
-        # Use landmark-based classification
+    elif hand_landmarks is not None:
+        # Always use landmark-based classification
         gesture_id, confidence = classify_gesture_by_landmarks(hand_landmarks)
-        st.success("✅ Using landmark-based gesture recognition")
+        st.success("✅ Gesture detected using landmark-based recognition")
         
         if debug_mode:
             st.write("**Landmark-based Classification:**")
@@ -290,17 +291,30 @@ if capture_button:
             
             # Show finger status
             thumb_tip = hand_landmarks.landmark[4]
+            thumb_mcp = hand_landmarks.landmark[2]
             index_tip = hand_landmarks.landmark[8]
+            index_pip = hand_landmarks.landmark[6]
             middle_tip = hand_landmarks.landmark[12]
+            middle_pip = hand_landmarks.landmark[10]
             ring_tip = hand_landmarks.landmark[16]
+            ring_pip = hand_landmarks.landmark[14]
             pinky_tip = hand_landmarks.landmark[20]
+            pinky_pip = hand_landmarks.landmark[18]
             
-            st.write("**Landmark positions:**")
-            st.write(f"Thumb tip: ({thumb_tip.x:.2f}, {thumb_tip.y:.2f})")
-            st.write(f"Index tip: ({index_tip.x:.2f}, {index_tip.y:.2f})")
-            st.write(f"Middle tip: ({middle_tip.x:.2f}, {middle_tip.y:.2f})")
-            st.write(f"Ring tip: ({ring_tip.x:.2f}, {ring_tip.y:.2f})")
-            st.write(f"Pinky tip: ({pinky_tip.x:.2f}, {pinky_tip.y:.2f})")
+            # Calculate finger states
+            thumb_up = thumb_tip.x > thumb_mcp.x
+            index_up = index_tip.y < index_pip.y
+            middle_up = middle_tip.y < middle_pip.y
+            ring_up = ring_tip.y < ring_pip.y
+            pinky_up = pinky_tip.y < pinky_pip.y
+            
+            st.write("**Finger States:**")
+            st.write(f"👍 Thumb: {'UP' if thumb_up else 'DOWN'}")
+            st.write(f"☝️ Index: {'UP' if index_up else 'DOWN'}")
+            st.write(f"🖕 Middle: {'UP' if middle_up else 'DOWN'}")
+            st.write(f"💍 Ring: {'UP' if ring_up else 'DOWN'}")
+            st.write(f"🤙 Pinky: {'UP' if pinky_up else 'DOWN'}")
+            st.write(f"🔢 Fingers up: {sum([thumb_up, index_up, middle_up, ring_up, pinky_up])}")
         
         # Store the frame for display
         if hand_roi is not None and hand_roi.size > 0:
@@ -308,62 +322,13 @@ if capture_button:
         else:
             st.session_state['captured_frame'] = frame.copy()
             
-    else:
-        # Fallback to model-based classification or show error
-        if not use_landmarks and frame is not None:
-            if hand_roi is not None and hand_roi.size > 0:
-                st.session_state['captured_frame'] = hand_roi.copy()
-                img_input = preprocess(hand_roi)
-                st.info("📸 Using hand ROI for model prediction")
-            else:
-                st.session_state['captured_frame'] = frame.copy()
-                img_input = preprocess(frame)
-                st.warning("⚠️ No hand ROI, using full frame for model prediction")
-            
-            # Debug mode for model
-            if debug_mode and img_input is not None:
-                debug_model_input(img_input, model)
-            
-            # Make prediction
-            if model is not None and img_input is not None:
-                try:
-                    prediction = model.predict(img_input, verbose=0)
-                    gesture_id = int(np.argmax(prediction[0]))
-                    confidence = float(np.max(prediction[0]))
-                    
-                    if debug_mode:
-                        st.write(f"**Model Prediction Details:**")
-                        st.write(f"Gesture ID: {gesture_id}")
-                        st.write(f"Confidence: {confidence:.4f}")
-                        
-                        # Show top 3 predictions
-                        top_3_indices = np.argsort(prediction[0])[-3:][::-1]
-                        st.write("**Top 3 predictions:**")
-                        for i, idx in enumerate(top_3_indices):
-                            prob = prediction[0][idx]
-                            gesture = GESTURE_TO_MORSE.get(idx, str(idx))
-                            st.write(f"{i+1}. Gesture {idx} ({gesture}): {prob:.4f}")
-                        
-                except Exception as e:
-                    st.error(f"Model prediction failed: {str(e)}")
-                    gesture_id, confidence = 0, 0.5  # Default to dot
-                    st.info("Using default gesture (dot)")
-            else:
-                st.warning("Model not available or preprocessing failed")
-                gesture_id, confidence = 0, 0.5  # Default to dot
-        else:
-            st.error("❌ No hand detected. Please show your hand clearly to the camera.")
-            st.session_state['status_message'] = '❌ No hand detected - show your hand to camera'
-            gesture_id, confidence = None, None
-    
-    # Process gesture if we have a valid prediction
-    if gesture_id is not None:
-        gesture_label = GESTURE_TO_MORSE.get(gesture_id, str(gesture_id))
-        
         # Store prediction results
         st.session_state['last_prediction'] = gesture_id
         st.session_state['last_confidence'] = confidence
-        st.session_state['last_gesture_label'] = gesture_label
+        st.session_state['last_gesture_label'] = GESTURE_TO_MORSE.get(gesture_id, str(gesture_id))
+        
+        # Process gesture
+        gesture_label = GESTURE_TO_MORSE.get(gesture_id, str(gesture_id))
         
         # Update buffers based on gesture
         if gesture_label == 'clear':
@@ -402,6 +367,9 @@ if capture_button:
         
         # Force rerun to update UI
         st.rerun()
+    else:
+        st.error("❌ No hand detected. Please show your hand clearly to the camera.")
+        st.session_state['status_message'] = '❌ No hand detected - show your hand to camera'
 
 # Show current status
 if st.session_state['status_message']:
@@ -470,7 +438,7 @@ st.markdown("### 📚 Morse Code Reference & Tools")
 # Show gesture mappings
 with st.expander("🤲 Gesture Mappings (Landmark-based)"):
     st.markdown("""
-    **Landmark-based Gesture Recognition:**
+    **Landmark-based Gesture Recognition (Always Active):**
     - **☝️ Index finger only**: `.` (dot)
     - **👍 Thumb only**: `-` (dash)  
     - **✌️ Index + Middle**: `x` (complete letter)
@@ -480,15 +448,11 @@ with st.expander("🤲 Gesture Mappings (Landmark-based)"):
     - **👍 + ☝️ Thumb + Index**: `-` (dash)
     - **Other combinations**: Various functions
     
-    **Model-based (if landmarks disabled):**
-    - **Gesture 0**: `.` (dot)
-    - **Gesture 1**: `-` (dash)
-    - **Gesture 2**: `x` (complete letter)
-    - **Gesture 3**: `submit` (finalize text)
-    - **Gesture 4**: `clear` (clear all)
-    - **Gesture 5**: `space` (add space)
-    - **Gesture 6**: `backspace` (remove last)
-    - **Gesture 7-9**: `enter/tab/shift` (ignored)
+    **Tips for better recognition:**
+    - Keep your hand steady and well-lit
+    - Make clear, distinct gestures
+    - Hold the gesture for a moment before capturing
+    - Ensure your entire hand is visible in the camera
     """)
 
 # Morse code reference
@@ -531,7 +495,7 @@ with col2:
 with st.sidebar:
     st.markdown("## 📋 How to Use")
     st.markdown("""
-    **With Landmark-based Recognition (Recommended):**
+    **Landmark-based Recognition (Always Active):**
     1. **Allow camera access** and wait for the webcam feed to start
     2. **Show your hand** clearly to the camera (green box should appear)
     3. **Make specific gestures**:
@@ -553,8 +517,8 @@ with st.sidebar:
     - Keep your hand steady and well-lit
     - Make clear, distinct gestures
     - Wait for the green box to appear before capturing
-    - Use debug mode to see what the system detects
-    - The capture button is always available, even if camera is starting
+    - Use debug mode to see finger detection details
+    - The system now always uses landmark-based recognition
     """)
 
     st.markdown("---")
@@ -562,8 +526,12 @@ with st.sidebar:
     st.markdown("""
     - **No hand detected**: Make sure lighting is good and hand is clearly visible
     - **Wrong gesture detected**: Try making the gesture more clearly or use debug mode
-    - **Model not working**: The landmark-based system is more reliable - keep it enabled
     - **Gestures not registering**: Ensure you click 'Capture Gesture' after making the gesture
     - **Camera not starting**: Check browser permissions and refresh the page
-    - **Capture button not working**: Make sure camera feed is active and hand is visible
+    - **Debug mode**: Enable to see detailed finger detection information
     """)
+
+    st.markdown("---")
+    st.markdown("## 🎯 Current Setup")
+    st.success("✅ Always using landmark-based recognition")
+    st.info("📍 More reliable and accurate than model-based detection")
