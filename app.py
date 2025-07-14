@@ -252,14 +252,17 @@ if webrtc_ctx.video_processor:
     hand_landmarks = webrtc_ctx.video_processor.hand_landmarks
 
 # Show webcam feed if available
+# Show webcam feed and hand detection status side by side
 if frame is not None:
-    st.image(frame, channels="BGR", caption="Webcam Feed (with MediaPipe Hand Detection)")
-    
-    # Show hand detection status
-    if hand_landmarks is not None:
-        st.success("✅ Hand detected - Ready to capture gesture! (Using landmark-based recognition)")
-    else:
-        st.warning("⚠️ No hand detected - Please show your hand to the camera")
+    col1, col2 = st.columns([2, 3])
+    with col1:
+        st.image(frame, channels="BGR", caption="Webcam Feed", use_column_width=True)
+    with col2:
+        if hand_landmarks is not None:
+            st.success("✅ Hand detected - Ready to capture gesture! (Using landmark-based recognition)")
+        else:
+            st.warning("⚠️ No hand detected - Please show your hand to the camera")
+
 else:
     st.info("📷 Webcam is starting... Please allow camera access and wait for video feed.")
 
