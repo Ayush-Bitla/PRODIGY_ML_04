@@ -7,19 +7,18 @@ import av
 import cv2
 import mediapipe as mp
 
-# Gesture mapping from README
-GESTURE_TO_MORSE = {
-    0: ".",  # Dot
-    1: "-",  # Dash
-    2: "x",  # Break
-    3: "submit",  # Submit/Decode buffer
-    4: "clear",   # Clear buffer
-    5: "space",   # Space
-    6: "backspace", # Backspace
-    7: "enter",   # Enter
-    8: "tab",     # Tab
-    9: "shift"    # Shift
+# Gesture and Morse mappings
+GESTURE_TO_MORSE = {0: ".", 1: "-", 2: "x", 3: "submit", 4: "clear", 5: "space", 6: "backspace", 7: "enter", 8: "tab", 9: "shift"}
+MORSE_CODE_DICT = {
+    'A': '.-', 'B': '-...', 'C': '-.-.', 'D': '-..', 'E': '.', 'F': '..-.',
+    'G': '--.', 'H': '....', 'I': '..', 'J': '.---', 'K': '-.-', 'L': '.-..',
+    'M': '--', 'N': '-.', 'O': '---', 'P': '.--.', 'Q': '--.-', 'R': '.-.',
+    'S': '...', 'T': '-', 'U': '..-', 'V': '...-', 'W': '.--', 'X': '-..-',
+    'Y': '-.--', 'Z': '--..', '1': '.----', '2': '..---', '3': '...--',
+    '4': '....-', '5': '.....', '6': '-....', '7': '--...', '8': '---..',
+    '9': '----.', '0': '-----', ' ': '/'
 }
+REVERSE_DICT = {v: k for k, v in MORSE_CODE_DICT.items()}
 
 @st.cache_resource
 def load_model():
@@ -28,7 +27,7 @@ def load_model():
 model = load_model()
 
 st.title("Hand Gesture Recognition (Webcam) + Morse Code + MediaPipe")
-st.write("Show your hand gesture to the webcam and click 'Capture' to predict and build Morse code. Now using MediaPipe for hand detection!")
+st.write("Show your hand gesture to the webcam and click 'Capture' to add to Morse. Click 'Submit' to decode. Now using MediaPipe for hand detection!")
 
 mp_hands = mp.solutions.hands
 mp_drawing = mp.solutions.drawing_utils
@@ -75,9 +74,11 @@ def preprocess(img):
     img_input = np.expand_dims(img_norm, axis=(0, -1))
     return img_input
 
-# Morse buffer in session state
+# Session state for Morse buffer and decoded text
 if 'morse_buffer' not in st.session_state:
     st.session_state['morse_buffer'] = ''
+if 'decoded_text' not in st.session_state:
+    st.session_state['decoded_text'] = ''
 if 'captured_frame' not in st.session_state:
     st.session_state['captured_frame'] = None
 if 'last_prediction' not in st.session_state:
@@ -94,34 +95,43 @@ if webrtc_ctx.video_processor:
     hand_roi = webrtc_ctx.video_processor.hand_roi
     if frame is not None:
         st.image(frame, channels="BGR", caption="Webcam Feed (with MediaPipe)")
-        if st.button("Capture"):
-            # Use hand ROI if available, else use whole frame
-            if hand_roi is not None and hand_roi.size > 0:
-                st.session_state['captured_frame'] = hand_roi.copy()
-                img_input = preprocess(hand_roi)
-            else:
-                st.session_state['captured_frame'] = frame.copy()
-                img_input = preprocess(frame)
-            prediction = model.predict(img_input, verbose=0)
-            predicted_class = int(np.argmax(prediction[0]))
-            confidence = float(np.max(prediction[0]))
-            gesture_label = GESTURE_TO_MORSE.get(predicted_class, str(predicted_class))
-            st.session_state['last_prediction'] = predicted_class
-            st.session_state['last_confidence'] = confidence
-            st.session_state['last_gesture_label'] = gesture_label
-            # Update Morse buffer
-            if gesture_label == 'clear':
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Capture"):
+                # Use hand ROI if available, else use whole frame
+                if hand_roi is not None and hand_roi.size > 0:
+                    st.session_state['captured_frame'] = hand_roi.copy()
+                    img_input = preprocess(hand_roi)
+                else:
+                    st.session_state['captured_frame'] = frame.copy()
+                    img_input = preprocess(frame)
+                prediction = model.predict(img_input, verbose=0)
+                gesture_id = int(np.argmax(prediction[0]))
+                confidence = float(np.max(prediction[0]))
+                gesture_label = GESTURE_TO_MORSE.get(gesture_id, str(gesture_id))
+                st.session_state['last_prediction'] = gesture_id
+                st.session_state['last_confidence'] = confidence
+                st.session_state['last_gesture_label'] = gesture_label
+                # Update Morse buffer
+                if gesture_label == 'clear':
+                    st.session_state['morse_buffer'] = ''
+                elif gesture_label == 'backspace':
+                    st.session_state['morse_buffer'] = st.session_state['morse_buffer'][:-1]
+                elif gesture_label == 'space':
+                    st.session_state['morse_buffer'] += ' '
+                elif gesture_label == 'submit':
+                    pass  # Use Submit button to decode
+                elif gesture_label in ['tab', 'enter', 'shift']:
+                    pass  # Ignore for Morse buffer
+                else:
+                    st.session_state['morse_buffer'] += gesture_label
+        with col2:
+            if st.button("Submit"):
+                # Decode Morse buffer to text
+                words = st.session_state['morse_buffer'].strip().split('x')
+                decoded = ''.join([REVERSE_DICT.get(w, '?') for w in words])
+                st.session_state['decoded_text'] = decoded
                 st.session_state['morse_buffer'] = ''
-            elif gesture_label == 'backspace':
-                st.session_state['morse_buffer'] = st.session_state['morse_buffer'][:-1]
-            elif gesture_label == 'space':
-                st.session_state['morse_buffer'] += ' '
-            elif gesture_label == 'submit':
-                pass  # We'll display the buffer below
-            elif gesture_label in ['tab', 'enter', 'shift', 'x']:
-                pass  # Ignore for Morse buffer
-            else:
-                st.session_state['morse_buffer'] += gesture_label
 
 if st.session_state['captured_frame'] is not None:
     st.image(st.session_state['captured_frame'], channels="BGR", caption="Captured Hand ROI" if st.session_state['captured_frame'].shape[0] < 400 else "Captured Frame")
@@ -130,9 +140,23 @@ if st.session_state['captured_frame'] is not None:
         st.markdown(f"**Confidence:** {st.session_state['last_confidence']:.2f}")
 
 st.markdown(f"### Morse Buffer: `{st.session_state['morse_buffer']}`")
+st.markdown(f"### Decoded Text: `{st.session_state['decoded_text']}`")
 
 if st.button("Clear Buffer"):
     st.session_state['morse_buffer'] = ''
+    st.session_state['decoded_text'] = ''
 
-if st.session_state['last_gesture_label'] == 'submit':
-    st.success(f"Morse Code Submitted: {st.session_state['morse_buffer']}") 
+# Encoder/Decoder UI
+st.markdown("---")
+st.markdown("### 🔠 Morse Code ↔ Text")
+col3, col4 = st.columns(2)
+with col3:
+    text_input = st.text_input("Enter Text to Encode")
+    if st.button("Encode"):
+        morse = ' '.join(MORSE_CODE_DICT.get(c.upper(), '') for c in text_input)
+        st.markdown(f"**Morse Code:** `{morse}`")
+with col4:
+    morse_input = st.text_input("Enter Morse Code to Decode (use space between letters)")
+    if st.button("Decode"):
+        decoded = ''.join(REVERSE_DICT.get(c, '?') for c in morse_input.strip().split())
+        st.markdown(f"**Decoded Text:** `{decoded}`") 
