@@ -6,4 +6,5 @@ scikit-learn
 opencv-python
 mediapipe 
 streamlit
-pillow 
+pillow
+streamlit-webrtc
