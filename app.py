@@ -44,6 +44,7 @@ class VideoProcessor(VideoProcessorBase):
     def __init__(self):
         self.frame = None
         self.hand_roi = None
+        self.hand_landmarks = None
         self.hands = mp_hands.Hands(
             static_image_mode=False,
             max_num_hands=1,
@@ -57,8 +58,11 @@ class VideoProcessor(VideoProcessorBase):
         results = self.hands.process(img_rgb)
         
         self.hand_roi = None
+        self.hand_landmarks = None
+        
         if results.multi_hand_landmarks:
             for hand_landmarks in results.multi_hand_landmarks:
+                self.hand_landmarks = hand_landmarks  # Store landmarks for gesture classification
                 mp_drawing.draw_landmarks(img, hand_landmarks, mp_hands.HAND_CONNECTIONS)
                 
                 # Calculate bounding box for hand
@@ -87,19 +91,128 @@ class VideoProcessor(VideoProcessorBase):
         return av.VideoFrame.from_ndarray(img, format="bgr24")
 
 def preprocess(img):
-    img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    img_resized = cv2.resize(img_gray, (64, 64))
-    img_norm = img_resized / 255.0
-    img_input = np.expand_dims(img_norm, axis=(0, -1))
-    return img_input
+    """Preprocess image for model input with debug info"""
+    try:
+        # Convert to grayscale
+        if len(img.shape) == 3:
+            img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+        else:
+            img_gray = img
+            
+        # Resize to model expected size
+        img_resized = cv2.resize(img_gray, (64, 64))
+        
+        # Normalize to [0, 1]
+        img_norm = img_resized.astype(np.float32) / 255.0
+        
+        # Add batch and channel dimensions
+        img_input = np.expand_dims(img_norm, axis=(0, -1))
+        
+        return img_input
+    except Exception as e:
+        st.error(f"Preprocessing failed: {str(e)}")
+        return None
 
-def mock_prediction(img):
-    """Mock prediction for demo purposes"""
-    # Simulate random gesture prediction
-    import random
-    gesture_id = random.randint(0, 9)
-    confidence = random.uniform(0.6, 0.95)
-    return gesture_id, confidence
+def classify_gesture_by_landmarks(hand_landmarks):
+    """Rule-based gesture classification using hand landmarks"""
+    try:
+        # Extract key landmarks (normalized coordinates 0-1)
+        thumb_tip = hand_landmarks.landmark[4]      # Thumb tip
+        thumb_mcp = hand_landmarks.landmark[2]      # Thumb MCP joint
+        index_tip = hand_landmarks.landmark[8]      # Index finger tip
+        index_pip = hand_landmarks.landmark[6]      # Index finger PIP joint
+        middle_tip = hand_landmarks.landmark[12]    # Middle finger tip
+        middle_pip = hand_landmarks.landmark[10]    # Middle finger PIP joint
+        ring_tip = hand_landmarks.landmark[16]      # Ring finger tip
+        ring_pip = hand_landmarks.landmark[14]      # Ring finger PIP joint
+        pinky_tip = hand_landmarks.landmark[20]     # Pinky finger tip
+        pinky_pip = hand_landmarks.landmark[18]     # Pinky finger PIP joint
+        wrist = hand_landmarks.landmark[0]          # Wrist
+        
+        # Calculate which fingers are extended
+        fingers_up = []
+        
+        # Thumb (check if thumb tip is to the right/left of thumb MCP)
+        if thumb_tip.x > thumb_mcp.x:  # Right hand
+            fingers_up.append(1)
+        else:  # Left hand or thumb down
+            fingers_up.append(0)
+            
+        # Other fingers (check if tip is above PIP joint)
+        finger_tips = [index_tip, middle_tip, ring_tip, pinky_tip]
+        finger_pips = [index_pip, middle_pip, ring_pip, pinky_pip]
+        
+        for tip, pip in zip(finger_tips, finger_pips):
+            if tip.y < pip.y:  # Finger is up (y decreases upward)
+                fingers_up.append(1)
+            else:
+                fingers_up.append(0)
+        
+        # Count extended fingers
+        fingers_count = sum(fingers_up)
+        
+        # Gesture classification based on finger patterns
+        if fingers_count == 1:
+            if fingers_up[1] == 1:  # Only index finger up
+                return 0, 0.9  # Dot (.)
+            elif fingers_up[0] == 1:  # Only thumb up
+                return 1, 0.9  # Dash (-)
+            else:
+                return 2, 0.8  # Separator (x)
+                
+        elif fingers_count == 2:
+            if fingers_up[1] == 1 and fingers_up[2] == 1:  # Index and middle up
+                return 2, 0.9  # Separator (x)
+            elif fingers_up[0] == 1 and fingers_up[1] == 1:  # Thumb and index up
+                return 1, 0.9  # Dash (-)
+            else:
+                return 5, 0.8  # Space
+                
+        elif fingers_count == 3:
+            if fingers_up[1] == 1 and fingers_up[2] == 1 and fingers_up[3] == 1:  # Index, middle, ring up
+                return 3, 0.9  # Submit
+            else:
+                return 6, 0.8  # Backspace
+                
+        elif fingers_count == 4:
+            return 4, 0.9  # Clear
+            
+        elif fingers_count == 5:  # All fingers up
+            return 5, 0.9  # Space
+            
+        elif fingers_count == 0:  # Closed fist
+            return 4, 0.9  # Clear
+            
+        else:
+            return 0, 0.5  # Default to dot
+            
+    except Exception as e:
+        st.error(f"Landmark classification failed: {str(e)}")
+        return 0, 0.5  # Default to dot
+
+def debug_model_input(img_input, model):
+    """Debug function to check model input and output"""
+    st.write("**Debug Info:**")
+    st.write(f"Input shape: {img_input.shape}")
+    st.write(f"Input dtype: {img_input.dtype}")
+    st.write(f"Input min/max: {img_input.min():.4f}/{img_input.max():.4f}")
+    
+    if model is not None:
+        prediction = model.predict(img_input, verbose=0)
+        st.write(f"Raw prediction shape: {prediction.shape}")
+        st.write(f"Raw prediction values: {prediction[0]}")
+        st.write(f"Prediction probabilities: {prediction[0] / prediction[0].sum()}")
+        
+        # Check if all predictions are similar (indicating a problem)
+        if np.std(prediction[0]) < 0.1:
+            st.warning("⚠️ Model predictions are very similar - this indicates a problem!")
+            st.write("Possible issues:")
+            st.write("- Model wasn't trained properly")
+            st.write("- Input preprocessing doesn't match training")
+            st.write("- Model expects different input format")
+        
+        return prediction
+    return None
 
 # Initialize session state
 if 'morse_buffer' not in st.session_state:
@@ -131,28 +244,100 @@ webrtc_ctx = webrtc_streamer(
 if webrtc_ctx.video_processor:
     frame = webrtc_ctx.video_processor.frame
     hand_roi = webrtc_ctx.video_processor.hand_roi
+    hand_landmarks = webrtc_ctx.video_processor.hand_landmarks
     
     if frame is not None:
         st.image(frame, channels="BGR", caption="Webcam Feed (with MediaPipe Hand Detection)")
         
+        # Show hand detection status
+        if hand_landmarks is not None:
+            st.success("✅ Hand detected - Ready to capture gesture!")
+        else:
+            st.warning("⚠️ No hand detected - Please show your hand to the camera")
+        
         # Capture button - prominently placed
-        if st.button("🎯 Capture Gesture", type="primary", use_container_width=True):
-            # Use hand ROI if available, else use whole frame
+        col1, col2, col3 = st.columns([2, 1, 1])
+        with col1:
+            capture_button = st.button("🎯 Capture Gesture", type="primary", use_container_width=True)
+        with col2:
+            use_landmarks = st.checkbox("Use Landmarks", value=True)
+        with col3:
+            debug_mode = st.checkbox("Debug")
+        
+        if capture_button:
+            if hand_landmarks is not None and use_landmarks:
+                # Use landmark-based classification
+                gesture_id, confidence = classify_gesture_by_landmarks(hand_landmarks)
+                st.success("✅ Using landmark-based gesture recognition")
+                
+                if debug_mode:
+                    st.write("**Landmark-based Classification:**")
+                    st.write(f"Detected gesture: {gesture_id} ({GESTURE_TO_MORSE.get(gesture_id, 'unknown')})")
+                    st.write(f"Confidence: {confidence:.2f}")
+                    
+                    # Show finger status
+                    thumb_tip = hand_landmarks.landmark[4]
+                    index_tip = hand_landmarks.landmark[8]
+                    middle_tip = hand_landmarks.landmark[12]
+                    ring_tip = hand_landmarks.landmark[16]
+                    pinky_tip = hand_landmarks.landmark[20]
+                    
+                    st.write("**Landmark positions:**")
+                    st.write(f"Thumb tip: ({thumb_tip.x:.2f}, {thumb_tip.y:.2f})")
+                    st.write(f"Index tip: ({index_tip.x:.2f}, {index_tip.y:.2f})")
+                    st.write(f"Middle tip: ({middle_tip.x:.2f}, {middle_tip.y:.2f})")
+                    st.write(f"Ring tip: ({ring_tip.x:.2f}, {ring_tip.y:.2f})")
+                    st.write(f"Pinky tip: ({pinky_tip.x:.2f}, {pinky_tip.y:.2f})")
+                    
+            else:
+                # Fallback to model-based classification
+                if hand_roi is not None and hand_roi.size > 0:
+                    st.session_state['captured_frame'] = hand_roi.copy()
+                    img_input = preprocess(hand_roi)
+                    st.info("📸 Using hand ROI for model prediction")
+                else:
+                    st.session_state['captured_frame'] = frame.copy()
+                    img_input = preprocess(frame)
+                    st.warning("⚠️ No hand ROI, using full frame for model prediction")
+                
+                # Debug mode for model
+                if debug_mode and img_input is not None:
+                    debug_model_input(img_input, model)
+                
+                # Make prediction
+                if model is not None and img_input is not None:
+                    try:
+                        prediction = model.predict(img_input, verbose=0)
+                        gesture_id = int(np.argmax(prediction[0]))
+                        confidence = float(np.max(prediction[0]))
+                        
+                        if debug_mode:
+                            st.write(f"**Model Prediction Details:**")
+                            st.write(f"Gesture ID: {gesture_id}")
+                            st.write(f"Confidence: {confidence:.4f}")
+                            
+                            # Show top 3 predictions
+                            top_3_indices = np.argsort(prediction[0])[-3:][::-1]
+                            st.write("**Top 3 predictions:**")
+                            for i, idx in enumerate(top_3_indices):
+                                prob = prediction[0][idx]
+                                gesture = GESTURE_TO_MORSE.get(idx, str(idx))
+                                st.write(f"{i+1}. Gesture {idx} ({gesture}): {prob:.4f}")
+                            
+                    except Exception as e:
+                        st.error(f"Model prediction failed: {str(e)}")
+                        gesture_id, confidence = 0, 0.5  # Default to dot
+                        st.info("Using default gesture (dot)")
+                else:
+                    st.warning("Model not available or preprocessing failed")
+                    gesture_id, confidence = 0, 0.5  # Default to dot
+            
+            # Store the frame for display
             if hand_roi is not None and hand_roi.size > 0:
                 st.session_state['captured_frame'] = hand_roi.copy()
-                img_input = preprocess(hand_roi)
             else:
                 st.session_state['captured_frame'] = frame.copy()
-                img_input = preprocess(frame)
-            
-            # Make prediction
-            if model is not None:
-                prediction = model.predict(img_input, verbose=0)
-                gesture_id = int(np.argmax(prediction[0]))
-                confidence = float(np.max(prediction[0]))
-            else:
-                gesture_id, confidence = mock_prediction(img_input)
-            
+                
             gesture_label = GESTURE_TO_MORSE.get(gesture_id, str(gesture_id))
             
             # Store prediction results
@@ -263,8 +448,19 @@ st.markdown("---")
 st.markdown("### 📚 Morse Code Reference & Tools")
 
 # Show gesture mappings
-with st.expander("🤲 Gesture Mappings"):
+with st.expander("🤲 Gesture Mappings (Landmark-based)"):
     st.markdown("""
+    **Landmark-based Gesture Recognition:**
+    - **☝️ Index finger only**: `.` (dot)
+    - **👍 Thumb only**: `-` (dash)  
+    - **✌️ Index + Middle**: `x` (complete letter)
+    - **👆 Index + Middle + Ring**: `submit` (finalize text)
+    - **✊ Closed fist**: `clear` (clear all)
+    - **🖐️ All fingers**: `space` (add space)
+    - **👍 + ☝️ Thumb + Index**: `-` (dash)
+    - **Other combinations**: Various functions
+    
+    **Model-based (if landmarks disabled):**
     - **Gesture 0**: `.` (dot)
     - **Gesture 1**: `-` (dash)
     - **Gesture 2**: `x` (complete letter)
@@ -277,6 +473,7 @@ with st.expander("🤲 Gesture Mappings"):
 
 # Morse code reference
 with st.expander("🔤 Morse Code Reference"):
+    st.markdown("**How it works:** Build letters with dots (.) and dashes (-), then complete with 'x' gesture")
     morse_ref = []
     for letter, code in sorted(MORSE_CODE_DICT.items()):
         if letter != ' ':
@@ -314,11 +511,35 @@ with col2:
 st.markdown("---")
 st.markdown("### 📋 How to Use")
 st.markdown("""
-1. **Make a gesture** in front of the camera
-2. **Click 'Capture Gesture'** to recognize and add to current letter
-3. **Use dots (.) and dashes (-)** to build Morse code letters
-4. **Use 'x' gesture** or click 'Complete Current Letter' to finish a letter
+**With Landmark-based Recognition (Recommended):**
+1. **Show your hand** clearly to the camera (green box should appear)
+2. **Make specific gestures**:
+   - ☝️ **Index finger only** → dot (.)
+   - 👍 **Thumb only** → dash (-)
+   - ✌️ **Index + Middle** → complete letter (x)
+   - ✊ **Closed fist** → clear all
+   - 🖐️ **All fingers** → space
+3. **Click 'Capture Gesture'** to recognize and add to current letter
+4. **Build letters** with dots and dashes, then complete with ✌️ gesture
 5. **Click 'Submit Final Text'** to get your decoded message
-6. **Use 'space' gesture** to add spaces between words
-7. **Use 'clear' gesture** to start over
+
+**Example:** To spell "SOS":
+- S: ☝️☝️☝️ (dot dot dot) → ✌️ (complete)
+- O: 👍👍👍 (dash dash dash) → ✌️ (complete)  
+- S: ☝️☝️☝️ (dot dot dot) → ✌️ (complete)
+
+**Tips:**
+- Keep your hand steady and well-lit
+- Make clear, distinct gestures
+- Wait for the green box to appear before capturing
+- Use debug mode to see what the system detects
+""")
+
+st.markdown("---")
+st.markdown("### 🔧 Troubleshooting")
+st.markdown("""
+- **No hand detected**: Make sure lighting is good and hand is clearly visible
+- **Wrong gesture detected**: Try making the gesture more clearly or use debug mode
+- **Model not working**: The landmark-based system is more reliable - keep it enabled
+- **Gestures not registering**: Ensure you click 'Capture Gesture' after making the gesture
 """)
