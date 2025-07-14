@@ -1,0 +1,35 @@
+# Dataset
+leapGestRecog/
+
+# Python virtual environment
+venv/
+
+# Model files
+*.h5
+!gesture_model_augmented.h5
+*.pkl
+*.ckpt
+
+# Streamlit cache and logs
+.streamlit/
+logs/
+__pycache__/
+*.pyc
+
+# Jupyter and notebook checkpoints
+.ipynb_checkpoints/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Environment and config
+.env
+*.json
+kaggle.json
+
+# Images and outputs
+*.png
+*.jpg
+*.jpeg
+examples/ 

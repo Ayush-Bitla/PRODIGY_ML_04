@@ -1,0 +1,9 @@
+kaggle
+tensorflow
+numpy>=1.26.0,<2.3.0
+matplotlib
+scikit-learn
+opencv-python
+mediapipe 
+streamlit
+pillow 
