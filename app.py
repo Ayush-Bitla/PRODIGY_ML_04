@@ -88,7 +88,7 @@ if 'last_confidence' not in st.session_state:
 if 'last_gesture_label' not in st.session_state:
     st.session_state['last_gesture_label'] = None
 
-webrtc_ctx = webrtc_streamer(key="gesture", video_processor_factory=VideoProcessor, async_processing=True, audio_receiver_size=0)
+webrtc_ctx = webrtc_streamer(key="gesture", video_processor_factory=VideoProcessor, async_processing=True, audio_receiver_size=0, media_stream_constraints={"video": True, "audio": False})
 
 if webrtc_ctx.video_processor:
     frame = webrtc_ctx.video_processor.frame
