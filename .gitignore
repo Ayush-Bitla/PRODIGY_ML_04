@@ -30,6 +30,7 @@ kaggle.json
 
 # Images and outputs
 *.png
+!accuracy.png
 *.jpg
 *.jpeg
 examples/ 
