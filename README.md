@@ -10,12 +10,6 @@ A comprehensive real-time hand gesture recognition system that uses computer vis
 
 This project implements a real-time hand gesture recognition system that detects hand gestures from a webcam feed and translates them into Morse code. The system uses a CNN-based model for gesture classification and MediaPipe for robust hand tracking. It supports 10 different gestures mapped to Morse code symbols and special functions, enabling live translation and interaction.
 
-## 🖼️ Result
-
-Below is a demo of the system in action, showing real-time gesture recognition and Morse code translation:
-
-![Demo](HandGuestureRecognitionDemo.gif)
-
 ---
 
 ## 🚀 Live Demo
